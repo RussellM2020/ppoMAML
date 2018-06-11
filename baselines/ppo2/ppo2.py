@@ -13,41 +13,52 @@ class Model(object):
     def __init__(self, *, policy, ob_space, ac_space, nbatch_act, nbatch_train,
                 nsteps, ent_coef, vf_coef, max_grad_norm):
         sess = tf.get_default_session()
+        
 
-        act_model = policy(sess, ob_space, ac_space, nbatch_act, 1, reuse=False)
-        train_model = policy(sess, ob_space, ac_space, nbatch_train, nsteps, reuse=True)
+        act_model = policy(sess, ob_space, ac_space, nbatch_act, 1, reuse=False)   #The old policy
+        train_model = policy(sess, ob_space, ac_space, nbatch_train, nsteps, reuse=True) # The policy to which we are going to update
 
-        A = train_model.pdtype.sample_placeholder([None])
-        ADV = tf.placeholder(tf.float32, [None])
-        R = tf.placeholder(tf.float32, [None])
-        OLDNEGLOGPAC = tf.placeholder(tf.float32, [None])
-        OLDVPRED = tf.placeholder(tf.float32, [None])
-        LR = tf.placeholder(tf.float32, [])
-        CLIPRANGE = tf.placeholder(tf.float32, [])
+       
 
-        neglogpac = train_model.pd.neglogp(A)
-        entropy = tf.reduce_mean(train_model.pd.entropy())
+        A = train_model.pdtype.sample_placeholder([None], name="A")
+        ADV = tf.placeholder(tf.float32, [None], name="ADV")
+        R = tf.placeholder(tf.float32, [None], name="R")
+        OLDNEGLOGPAC = tf.placeholder(tf.float32, [None], name="OLDNEGLOGPAC")
+        OLDVPRED = tf.placeholder(tf.float32, [None], name="OLDVPRED")
+        LR = tf.placeholder(tf.float32, [], name="LR")
+        CLIPRANGE = tf.placeholder(tf.float32, [], name="CLIPRANGE")
 
-        vpred = train_model.vf
-        vpredclipped = OLDVPRED + tf.clip_by_value(train_model.vf - OLDVPRED, - CLIPRANGE, CLIPRANGE)
-        vf_losses1 = tf.square(vpred - R)
-        vf_losses2 = tf.square(vpredclipped - R)
-        vf_loss = .5 * tf.reduce_mean(tf.maximum(vf_losses1, vf_losses2))
-        ratio = tf.exp(OLDNEGLOGPAC - neglogpac)
-        pg_losses = -ADV * ratio
-        pg_losses2 = -ADV * tf.clip_by_value(ratio, 1.0 - CLIPRANGE, 1.0 + CLIPRANGE)
-        pg_loss = tf.reduce_mean(tf.maximum(pg_losses, pg_losses2))
-        approxkl = .5 * tf.reduce_mean(tf.square(neglogpac - OLDNEGLOGPAC))
-        clipfrac = tf.reduce_mean(tf.to_float(tf.greater(tf.abs(ratio - 1.0), CLIPRANGE)))
-        loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef
-        with tf.variable_scope('model'):
-            params = tf.trainable_variables()
-        grads = tf.gradients(loss, params)
-        if max_grad_norm is not None:
-            grads, _grad_norm = tf.clip_by_global_norm(grads, max_grad_norm)
-        grads = list(zip(grads, params))
-        trainer = tf.train.AdamOptimizer(learning_rate=LR, epsilon=1e-5)
-        _train = trainer.apply_gradients(grads)
+
+
+        with tf.name_scope("Objective"):
+            neglogpac = train_model.pd.neglogp(A)
+            entropy = tf.reduce_mean(train_model.pd.entropy())
+
+            vpred = train_model.vf
+            vpredclipped = OLDVPRED + tf.clip_by_value(train_model.vf - OLDVPRED, - CLIPRANGE, CLIPRANGE)
+            vf_losses1 = tf.square(vpred - R)
+            vf_losses2 = tf.square(vpredclipped - R)
+            vf_loss = .5 * tf.reduce_mean(tf.maximum(vf_losses1, vf_losses2))
+            ratio = tf.exp(OLDNEGLOGPAC - neglogpac)
+            pg_losses = -ADV * ratio
+            pg_losses2 = -ADV * tf.clip_by_value(ratio, 1.0 - CLIPRANGE, 1.0 + CLIPRANGE)
+            pg_loss = tf.reduce_mean(tf.maximum(pg_losses, pg_losses2))
+            approxkl = .5 * tf.reduce_mean(tf.square(neglogpac - OLDNEGLOGPAC))
+            clipfrac = tf.reduce_mean(tf.to_float(tf.greater(tf.abs(ratio - 1.0), CLIPRANGE)))
+            loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef
+
+        with tf.name_scope("PolicyGradient"):
+            with tf.variable_scope('model'):
+                import ipdb
+                ipdb.set_trace()
+                params = tf.trainable_variables()
+
+            grads = tf.gradients(loss, params)
+            if max_grad_norm is not None:
+                grads, _grad_norm = tf.clip_by_global_norm(grads, max_grad_norm)
+            grads = list(zip(grads, params))
+            trainer = tf.train.AdamOptimizer(learning_rate=LR, epsilon=1e-5)
+            _train = trainer.apply_gradients(grads)
 
         def train(lr, cliprange, obs, returns, masks, actions, values, neglogpacs, states=None):
             advs = returns - values
@@ -79,11 +90,14 @@ class Model(object):
         self.train_model = train_model
         self.act_model = act_model
         self.step = act_model.step
+        self.detStep = act_model.detStep
         self.value = act_model.value
         self.initial_state = act_model.initial_state
         self.save = save
         self.load = load
         tf.global_variables_initializer().run(session=sess) #pylint: disable=E1101
+
+       
 
 class Runner(AbstractEnvRunner):
 
@@ -96,18 +110,34 @@ class Runner(AbstractEnvRunner):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [],[],[],[],[],[]
         mb_states = self.states
         epinfos = []
+        
+     
+
         for _ in range(self.nsteps):
+           
             actions, values, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
             mb_obs.append(self.obs.copy())
             mb_actions.append(actions)
             mb_values.append(values)
             mb_neglogpacs.append(neglogpacs)
             mb_dones.append(self.dones)
+
+
             self.obs[:], rewards, self.dones, infos = self.env.step(actions)
+
+
+           
             for info in infos:
                 maybeepinfo = info.get('episode')
                 if maybeepinfo: epinfos.append(maybeepinfo)
+
+           
+
             mb_rewards.append(rewards)
+
+
+
+        
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
@@ -130,6 +160,9 @@ class Runner(AbstractEnvRunner):
             delta = mb_rewards[t] + self.gamma * nextvalues * nextnonterminal - mb_values[t]
             mb_advs[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
         mb_returns = mb_advs + mb_values
+
+        
+
         return (*map(sf01, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs)),
             mb_states, epinfos)
 # obs, returns, masks, actions, values, neglogpacs, states = runner.run()
@@ -148,14 +181,16 @@ def constfn(val):
 def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
             vf_coef=0.5,  max_grad_norm=0.5, gamma=0.99, lam=0.95,
             log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
-            save_interval=0, load_path=None):
-
+            save_interval=10, loadModel=None, pickLength = 100):
+    
+   
     if isinstance(lr, float): lr = constfn(lr)
     else: assert callable(lr)
     if isinstance(cliprange, float): cliprange = constfn(cliprange)
     else: assert callable(cliprange)
     total_timesteps = int(total_timesteps)
 
+  
     nenvs = env.num_envs
     ob_space = env.observation_space
     ac_space = env.action_space
@@ -165,17 +200,30 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
     make_model = lambda : Model(policy=policy, ob_space=ob_space, ac_space=ac_space, nbatch_act=nenvs, nbatch_train=nbatch_train,
                     nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef,
                     max_grad_norm=max_grad_norm)
+
     if save_interval and logger.get_dir():
         import cloudpickle
         with open(osp.join(logger.get_dir(), 'make_model.pkl'), 'wb') as fh:
             fh.write(cloudpickle.dumps(make_model))
     model = make_model()
-    if load_path is not None:
-        model.load(load_path)
+
+    sess = tf.get_default_session()
+    writer = tf.summary.FileWriter("/home/russellm/tfGraphs/ppo")
+    writer.add_graph(sess.graph)
+
+    if loadModel is not None:
+       
+
+        model.load(loadModel)
+
+
+        print("LOADING COMPLETE")
     runner = Runner(env=env, model=model, nsteps=nsteps, gamma=gamma, lam=lam)
 
     epinfobuf = deque(maxlen=100)
     tfirststart = time.time()
+
+    
 
     nupdates = total_timesteps//nbatch
     for update in range(1, nupdates+1):
@@ -186,6 +234,9 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         lrnow = lr(frac)
         cliprangenow = cliprange(frac)
         obs, returns, masks, actions, values, neglogpacs, states, epinfos = runner.run() #pylint: disable=E0632
+
+        
+
         epinfobuf.extend(epinfos)
         mblossvals = []
         if states is None: # nonrecurrent version
@@ -193,9 +244,13 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
             for _ in range(noptepochs):
                 np.random.shuffle(inds)
                 for start in range(0, nbatch, nbatch_train):
+
                     end = start + nbatch_train
                     mbinds = inds[start:end]
                     slices = (arr[mbinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
+                    
+
+                    
                     mblossvals.append(model.train(lrnow, cliprangenow, *slices))
         else: # recurrent version
             assert nenvs % nminibatches == 0
@@ -223,8 +278,21 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
             logger.logkv("total_timesteps", update*nbatch)
             logger.logkv("fps", fps)
             logger.logkv("explained_variance", float(ev))
-            logger.logkv('eprewmean', safemean([epinfo['r'] for epinfo in epinfobuf]))
+            
+
+            logger.logkv('eprewStage1max', safemean([epinfo['maxRewStage1'] for epinfo in epinfobuf]))
+            logger.logkv('eprewStage2max', safemean([epinfo['maxRewStage2'] for epinfo in epinfobuf]))
+
+            logger.logkv('eprewStage1mean', safemean([epinfo['rewStage1'] for epinfo in epinfobuf]))
+            logger.logkv('eprewStage2mean', safemean([epinfo['rewStage2'] for epinfo in epinfobuf]))
+            
+          
+
+
+
             logger.logkv('eplenmean', safemean([epinfo['l'] for epinfo in epinfobuf]))
+
+            
             logger.logkv('time_elapsed', tnow - tfirststart)
             for (lossval, lossname) in zip(lossvals, model.loss_names):
                 logger.logkv(lossname, lossval)
@@ -232,9 +300,15 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         if save_interval and (update % save_interval == 0 or update == 1) and logger.get_dir():
             checkdir = osp.join(logger.get_dir(), 'checkpoints')
             os.makedirs(checkdir, exist_ok=True)
-            savepath = osp.join(checkdir, '%.5i'%update)
-            print('Saving to', savepath)
-            model.save(savepath)
+            #savepath = osp.join(checkdir, '%.5i'%update)
+
+           
+            print('Saving env scaling')
+            env.saveScaling(checkdir+"/scaling"+str(update)+".pkl")
+
+            print('Saving model')
+
+            model.save(checkdir+"/model"+str(update))
     env.close()
     return model
 

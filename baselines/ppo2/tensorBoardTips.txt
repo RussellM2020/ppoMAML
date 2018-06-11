@@ -1,0 +1,1 @@
+1. No placeholders, no global_init required, and so no init ops. But if you add placeholders and don't initialize, graph won't load

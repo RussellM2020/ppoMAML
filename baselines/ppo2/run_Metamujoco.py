@@ -7,8 +7,8 @@ from baselines import bench, logger
 def train(env_id, num_timesteps, seed):
     from baselines.common import set_global_seeds
     from baselines.common.vec_env.vec_normalize import VecNormalize
-    from baselines.ppo2 import ppo2
-    from baselines.ppo2.policies import MlpPolicy
+    from baselines.ppo2 import metaPPO2
+    from baselines.ppo2.policies import newMlpPolicy
     import gym
     import tensorflow as tf
     from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
@@ -27,8 +27,8 @@ def train(env_id, num_timesteps, seed):
     env = VecNormalize(env)
 
     set_global_seeds(seed)
-    policy = MlpPolicy
-    ppo2.learn(policy=policy, env=env, nsteps=2048, nminibatches=32,
+    policy = newMlpPolicy
+    metaPPO2.learn(policy=policy, env=env, nsteps=2048, nminibatches=32,
                        lam=0.95, gamma=0.99, noptepochs=10, log_interval=1,
                        ent_coef=0.0,
                        lr=3e-4,
